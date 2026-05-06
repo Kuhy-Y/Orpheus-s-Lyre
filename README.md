@@ -4,7 +4,7 @@ This interactive p5.js project is inspired by the myth of Orpheus's Lyre, whose 
 
 ## p5.js Web Editor
 
-Live sketch:
+Live sketch you can try:
 
 `https://editor.p5js.org/Kuhy/full/YBZJcYddv`
 
@@ -21,7 +21,6 @@ This Arduino sketch uses:
 
 The servo-related code has been removed.  
 The sketch only reads touch input from the MPR121 and sends note values `0` to `6` through Serial.
-
 
 ## Files kept in this repository
 
