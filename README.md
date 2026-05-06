@@ -1,31 +1,31 @@
-# udist-p5js
+# Orpheus-s-Lyre
 
-这是一个基于 p5.js 的交互式网页作品，包含音频播放和串口/Arduino 连接功能。
+This interactive p5.js project is inspired by the myth of Orpheus's Lyre, whose seven-stringed lyre could move trees and stones. The work shifts that transformation toward a more human condition: the desire for a response.
 
-## 核心运行文件
+## Main project files
 
 - `index.html`
 - `style.css`
 - `sketch.js`
 - `libraries/p5.min.js`
 - `libraries/p5.sound.min.js`
-- `1.mp3` 到 `7.mp3`
+- `1.mp3` to `7.mp3`
 
-## 本地预览
+## Local preview
 
-如果电脑装了 Node.js，可以在项目目录运行：
+If Node.js is installed, run:
 
 ```powershell
 node local-server.js
 ```
 
-然后打开：
+Then open:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-也可以直接运行：
+You can also use:
 
 - `start-preview.bat`
 - `start-preview.ps1`
