@@ -10,7 +10,18 @@ Live sketch:
 
 ## Arduino Code
 
-Arduino Code
+`Arduino Code`
+
+## Arduino dependencies
+
+This Arduino sketch uses:
+
+- `Wire.h` (built-in Arduino library)
+- `Adafruit_MPR121.h` from the `Adafruit MPR121` library
+
+The servo-related code has been removed.  
+The sketch only reads touch input from the MPR121 and sends note values `0` to `6` through Serial.
+
 
 ## Files kept in this repository
 
