@@ -21,6 +21,9 @@ const GROUND_HUE = 184;
 const GROUND_SAT = 94;
 const GROUND_BRI = 14;
 const MOSAIC_GRID_SIZE = 82;
+const BRANCH_OVERLAP_SAMPLE_COUNT = 18;
+const BRANCH_OVERLAP_PADDING = 24;
+const BRANCH_OVERLAP_PADDING_SQ = BRANCH_OVERLAP_PADDING * BRANCH_OVERLAP_PADDING;
 
 function setupSounds() {
   sounds = soundFiles.map(() => null);
@@ -895,6 +898,7 @@ class TreeSystem {
 
     this.nodes = [];
     this.branches = [];
+    this.orderedBranches = [];
     this.fronds = [];
     this.blossoms = [];
     this.birds = [];
@@ -906,9 +910,72 @@ class TreeSystem {
     this.rootParticles = [];
 
     this.nextNodeId = 0;
+    this.branchOrderDirty = true;
+    this.nodeSelectionDirty = true;
+    this.cachedSelectableNodes = [];
+    this.cachedSelectableNodeWeightTotal = 0;
 
     const rootNode = this.makeNode(rootX, rootY, -HALF_PI, 18.5, 0, "trunk");
     this.nodes.push(rootNode);
+  }
+
+  addBranch(branch) {
+    getBranchOverlapCache(branch);
+    this.branches.push(branch);
+    this.branchOrderDirty = true;
+  }
+
+  addNode(node) {
+    this.nodes.push(node);
+    this.nodeSelectionDirty = true;
+  }
+
+  getOrderedBranches() {
+    if (this.branchOrderDirty) {
+      this.orderedBranches = this.branches.slice().sort((a, b) => b.startThickness - a.startThickness);
+      this.branchOrderDirty = false;
+    }
+
+    return this.orderedBranches;
+  }
+
+  rebuildSelectableNodeCache() {
+    if (!this.nodeSelectionDirty) {
+      return;
+    }
+
+    this.cachedSelectableNodes = [];
+    this.cachedSelectableNodeWeightTotal = 0;
+
+    for (let n of this.nodes) {
+      if (
+        n.thickness <= 0.95 ||
+        n.depth > 12 ||
+        n.branchCount >= (n.kind === "interior" ? 2 : 5)
+      ) {
+        continue;
+      }
+
+      let score = 1;
+
+      if (n.depth === 0) score *= 0.08;
+      else if (n.depth <= 2) score *= 0.62;
+      else if (n.depth <= 5) score *= 1.02;
+      else if (n.depth <= 8) score *= 1.36;
+      else score *= 1.18;
+
+      score *= map(n.branchCount, 0, 5, 1.34, 0.18, true);
+      score *= map(n.thickness, 18.5, 1, 0.88, 1.08, true);
+      score *= map(n.pos.y, this.root.y, height * 0.16, 0.58, 1.38, true);
+      score *= map(abs(n.pos.x - width * 0.5), 0, width * 0.5, 1.08, 0.84, true);
+      if (n.kind === "interior") score *= 0.96;
+
+      const weight = max(1, floor(score * 12));
+      this.cachedSelectableNodes.push({ node: n, weight });
+      this.cachedSelectableNodeWeightTotal += weight;
+    }
+
+    this.nodeSelectionDirty = false;
   }
 
   makeNode(x, y, angle, thickness, depth, kind = "terminal") {
@@ -952,10 +1019,10 @@ class TreeSystem {
       let result = this.makeBranch(baseNode, note, i, branchNum);
       if (!result) continue;
 
-      this.branches.push(result.branch);
-      this.nodes.push(result.newNode);
+      this.addBranch(result.branch);
+      this.addNode(result.newNode);
       if (result.interiorNode) {
-        this.nodes.push(result.interiorNode);
+        this.addNode(result.interiorNode);
       }
       made++;
       latestResult = result;
@@ -973,39 +1040,26 @@ class TreeSystem {
 
     this.triggersSinceBlossom = blossomed ? 0 : this.triggersSinceBlossom + 1;
     baseNode.branchCount += made;
+    this.nodeSelectionDirty = true;
   }
 
   chooseNode() {
-    let candidates = this.nodes.filter(n =>
-      n.thickness > 0.95 &&
-      n.depth <= 12 &&
-      n.branchCount < (n.kind === "interior" ? 2 : 5)
-    );
+    this.rebuildSelectableNodeCache();
 
-    if (candidates.length === 0) return random(this.nodes);
-
-    let weighted = [];
-
-    for (let n of candidates) {
-      let score = 1;
-
-      if (n.depth === 0) score *= 0.08;
-      else if (n.depth <= 2) score *= 0.62;
-      else if (n.depth <= 5) score *= 1.02;
-      else if (n.depth <= 8) score *= 1.36;
-      else score *= 1.18;
-
-      score *= map(n.branchCount, 0, 5, 1.34, 0.18, true);
-      score *= map(n.thickness, 18.5, 1, 0.88, 1.08, true);
-      score *= map(n.pos.y, this.root.y, height * 0.16, 0.58, 1.38, true);
-      score *= map(abs(n.pos.x - width * 0.5), 0, width * 0.5, 1.08, 0.84, true);
-      if (n.kind === "interior") score *= 0.96;
-
-      let copies = max(1, floor(score * 12));
-      for (let i = 0; i < copies; i++) weighted.push(n);
+    if (this.cachedSelectableNodes.length === 0) {
+      return random(this.nodes);
     }
 
-    return random(weighted);
+    let pick = random(this.cachedSelectableNodeWeightTotal);
+    for (let i = 0; i < this.cachedSelectableNodes.length; i++) {
+      const entry = this.cachedSelectableNodes[i];
+      pick -= entry.weight;
+      if (pick <= 0) {
+        return entry.node;
+      }
+    }
+
+    return this.cachedSelectableNodes[this.cachedSelectableNodes.length - 1].node;
   }
 
   makeBranch(baseNode, note, idxInBurst, burstCount) {
@@ -1208,22 +1262,28 @@ class TreeSystem {
   }
 
   branchOverlapScore(candidate) {
-    let candidatePts = sampleBezier(candidate, 18);
+    const candidateCache = getBranchOverlapCache(candidate);
+    const candidatePts = candidateCache.points;
+    const candidateBounds = candidateCache.bounds;
     let score = 0;
 
     for (let b of this.branches) {
-      let pts = sampleBezier(b, 18);
+      const branchCache = getBranchOverlapCache(b);
+      if (!boundsOverlap(candidateBounds, branchCache.bounds)) {
+        continue;
+      }
+
+      const pts = branchCache.points;
 
       for (let cp of candidatePts) {
         for (let p of pts) {
-          let d = dist(cp.x, cp.y, p.x, p.y);
+          if (cp.nearRoot || p.nearRoot) {
+            continue;
+          }
 
-          let nearRoot =
-            dist(cp.x, cp.y, candidate.start.x, candidate.start.y) < 24 ||
-            dist(p.x, p.y, b.start.x, b.start.y) < 24;
-
-          if (!nearRoot && d < 24) {
-            score += (24 - d) * 1.8;
+          const dSq = squaredDistance(cp.x, cp.y, p.x, p.y);
+          if (dSq < BRANCH_OVERLAP_PADDING_SQ) {
+            score += (BRANCH_OVERLAP_PADDING - sqrt(dSq)) * 1.8;
           }
         }
       }
@@ -1519,7 +1579,7 @@ class TreeSystem {
   display() {
     const horizonY = height * 0.82;
     this.displayRootParticles("back");
-    let ordered = this.branches.slice().sort((a, b) => b.startThickness - a.startThickness);
+    let ordered = this.getOrderedBranches();
     for (let b of ordered) {
       drawReflectedBranchBezier(b, horizonY);
     }
@@ -2647,13 +2707,59 @@ function angleLerp(a, b, t) {
   return a + delta * t;
 }
 
-function sampleBezier(branch, count) {
-  let pts = [];
-  for (let i = 0; i <= count; i++) {
-    let t = i / count;
-    pts.push(bezierPointVec(branch.start, branch.c1, branch.c2, branch.end, t));
+function squaredDistance(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  return dx * dx + dy * dy;
+}
+
+function boundsOverlap(a, b) {
+  return !(
+    a.maxX < b.minX ||
+    b.maxX < a.minX ||
+    a.maxY < b.minY ||
+    b.maxY < a.minY
+  );
+}
+
+function getBranchOverlapCache(branch, count = BRANCH_OVERLAP_SAMPLE_COUNT) {
+  if (branch._overlapCache && branch._overlapCache.sampleCount === count) {
+    return branch._overlapCache;
   }
-  return pts;
+
+  const points = [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (let i = 0; i <= count; i++) {
+    const t = i / count;
+    const x = bezierPoint(branch.start.x, branch.c1.x, branch.c2.x, branch.end.x, t);
+    const y = bezierPoint(branch.start.y, branch.c1.y, branch.c2.y, branch.end.y, t);
+    points.push({
+      x,
+      y,
+      nearRoot: squaredDistance(x, y, branch.start.x, branch.start.y) < BRANCH_OVERLAP_PADDING_SQ
+    });
+    minX = min(minX, x);
+    minY = min(minY, y);
+    maxX = max(maxX, x);
+    maxY = max(maxY, y);
+  }
+
+  branch._overlapCache = {
+    sampleCount: count,
+    points,
+    bounds: {
+      minX: minX - BRANCH_OVERLAP_PADDING,
+      minY: minY - BRANCH_OVERLAP_PADDING,
+      maxX: maxX + BRANCH_OVERLAP_PADDING,
+      maxY: maxY + BRANCH_OVERLAP_PADDING
+    }
+  };
+
+  return branch._overlapCache;
 }
 
 function bezierPointVec(p0, p1, p2, p3, t) {
