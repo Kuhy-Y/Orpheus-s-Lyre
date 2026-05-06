@@ -1,0 +1,61 @@
+#include <Wire.h>
+#include "Adafruit_MPR121.h"
+#include <Servo.h>
+
+Adafruit_MPR121 cap = Adafruit_MPR121();
+
+uint16_t lasttouched = 0;
+uint16_t currtouched = 0;
+
+// ===== 触摸口 & 音阶 =====
+const uint8_t touchPins[] = {0,2,4,5,6,8,10};
+const uint8_t touchNotes[] = {0,1,2,3,4,5,6}; // do~ti
+
+unsigned long lastSentTime = 0;
+const unsigned long debounceMs = 50;
+
+void setup(){
+  Serial.begin(9600);
+  while(!Serial){ delay(10); }
+  Wire.begin();
+
+  if(!cap.begin(0x5A)){
+    while(1);
+  }
+  cap.setAutoconfig(true);
+
+  for(int i=0;i<3;i++){
+    servos[i].attach(servoPins[i]);
+    servos[i].write(0);
+  }
+
+  randomSeed(analogRead(A0));
+}
+
+void loop(){
+  currtouched = cap.touched();
+  unsigned long now = millis();
+
+  for(uint8_t i=0;i<7;i++){
+    uint8_t pin = touchPins[i];
+
+    // ===== Touch（刚按下） =====
+    if((currtouched & (1<<pin)) && !(lasttouched & (1<<pin))){
+      // 发送单字节音阶
+      if(now - lastSentTime > debounceMs){
+        Serial.write(touchNotes[i]); // << 关键改动
+        lastSentTime = now;
+      }
+    }
+
+    // ===== Release（刚松开） =====
+    if(!(currtouched & (1<<pin)) && (lasttouched & (1<<pin))){
+      for(int s=0;s<3;s++){
+        servos[s].write(0);
+      }
+    }
+  }
+
+  lasttouched = currtouched;
+  delay(10);
+}
